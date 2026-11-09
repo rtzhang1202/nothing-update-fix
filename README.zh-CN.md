@@ -8,15 +8,33 @@
 - 完整根因分析与证据链：[`docs/ROOT_CAUSE.md`](docs/ROOT_CAUSE.md)（英文）
 - 证据截图：[`screenshots/`](screenshots/)（断链状态 + 真机验证）
 
-## 真机截图（Nothing Phone (3)，验证版 `6611d645…`）
+## v1.0.1 更新内容
 
-| 软件信息页 · 注入入口（链路 A） | 固件信息（链路 A） | 更新日志（链路 A） |
-|---|---|---|
-| ![软件信息页注入入口](screenshots/device_chain_a_swinfo.png) | ![固件信息页](screenshots/device_firmware_page.png) | ![模块更新日志页](screenshots/device_changelog.png) |
+- **系统更新页：直接向 GMS 更新页注入两张 Nothing 风格卡片**（作用域 `com.google.android.gms`），
+  内容不再依赖 OTA 状态机：
+  - **What's New / 更新内容**卡——正文取自模块内置 `changelog.json` 的当前版本，附
+    「查看全部更新日志 ›」跳转模块 `ChangelogActivity`；
+  - **固件信息**卡——型号 `A024`、设备代号 `Metroid`、Android 17、系统版本、Build 号、基带、
+    内核、安全补丁、序列号，全部运行时读取 `Build` 属性；
+  - **无 pending update 也渲染**——v1.0.0 的「状态门」已知限制就此解决。注入幂等（视图 tag），
+    锚在 `SystemUpdateChimeraActivity` 生命周期（Chimera 委托坑见
+    [§7 模块架构](#7-模块架构)——它是 Chimera *模块委托*，不是 `Activity`）。
+- **修 About 链接**指向真实仓库地址。
+- 真机验证通过（Nothing Phone (3)）：两卡上屏、更新日志链接跳转、链路 A 回归正常；
+  APK sha256 `c3f49ca4…`（截图见下）。
 
-| 更新页 · What's New 状态门（链路 B） | 模块状态页 / 钩子命中日志 |
+## 真机截图（Nothing Phone (3)，v1.0.1 验证通过，2026-11-10）
+
+| 更新页 · 注入的 **What's New / 更新内容**卡（无 pending OTA） | 更新页 · 注入的 **固件信息**卡 + 「查看全部更新日志」链接 |
 |---|---|
-| ![更新页状态门](screenshots/device_update_page_state_gate.png) | ![模块状态页](screenshots/device_app_status.png) |
+| ![更新页注入的更新内容卡](screenshots/device_v101_update_cards.png) | ![更新页固定信息卡](screenshots/device_v101_firmware_card.png) |
+
+| 「查看全部更新日志」→ 模块 `ChangelogActivity` | 软件信息页 · 链路 A 回归（v1.0.1） |
+|---|---|
+| ![模块更新日志页](screenshots/device_v101_changelog.png) | ![软件信息页两入口仍在](screenshots/device_v101_chainA.png) |
+
+v1.0.0 时期的截图（链路 A 入口、模块状态页、修复前被状态门挡住的更新页）仍保留在
+[`screenshots/`](screenshots/)，索引见 [`screenshots/README.md`](screenshots/README.md)。
 
 ## 1. 问题
 
@@ -80,6 +98,19 @@ root（Magisk + LSPosed/Vector）之后，两处 Nothing 定制内容消失：
   `/prefix/<p>` 两种查询形态。`update_description` HTML 运行时拼装（changelog 分节 +
   固件信息表——基带 `gsm.version.baseband`、内核 `ro.kernel.version`/uname、build
   `ro.build.display.id` 实时读取，全部 try/catch 兜底）。
+- **链路 C — 更新页卡片视图注入（v1.0.1，作用域 `com.google.android.gms`）**：不再依赖 GMS 渲染
+  `update_description` 载荷，而由模块自己构建两张卡，插在版本摘要 `TextView`（`id/description`）之后：
+  - **What's New / 更新内容**卡：标题 + `Nothing OS 5.0 · C5.0-260924-2115` + 内置
+    `assets/changelog.json` 当前版本分节（前 3 节 × 前 4 条，其余折进链接）+「查看全部更新日志 ›」
+    （点击进模块 `ChangelogActivity`）；
+  - **固件信息**卡：型号 / 设备代号 / Android 版本 / 系统版本 / Build 号 / 基带 / 内核 / 安全补丁 /
+    序列号，渲染时实时读取 `android.os.Build`、`ro.*` 属性与 `/proc/version`，逐行 try/catch 兜底；
+  - **与 OTA 状态解耦**：页面仍显示「系统已是最新版本」时两卡照样渲染，不读也不写
+    `UpdateDescription` / `SystemUpdateStatus`；
+  - **幂等**：卡片容器带视图 tag（`nuf_gms_cards_v1`），反复 `onCreate` / `onResume`
+    （点「检查更新」、返回）不会重复插入；
+  - **锚点**：主钩 `SystemUpdateChimeraActivity` 生命周期（L1），另有 L2 渲染器探针与
+    L3 通用 `Activity.onResume` 兜底，Chimera 坑见 §7。
 - **加分钩子**：`com.google.android.gms.update.UpdateDescription(String,String,String,String)`
   构造器，**仅补空字段**（`setIfEmpty`），绝不覆盖真实 OTA 描述。
 - **状态页**：钩子命中日志（`XposedBridge.log` + `ContentProvider` 回传），最近 40 行，
@@ -155,20 +186,39 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 │       覆盖/追加  update_title / update_description / update_size
 │   加分：UpdateDescription(String,String,String,String) 构造器 → setIfEmpty 补空
 │
+├─ 链路 C — handleLoadPackage("com.google.android.gms")   [v1.0.1 视图注入]
+│   L1：hook SystemUpdateChimeraActivity#onCreate/onResume（主锚点）
+│       resolveActivity()：委托对象 0 参 getter / Activity 字段 → 再退
+│       ActivityThread.getActivities() 扫描，选 findViewById 能命中锚点 id 的那个
+│       锚点 id/description → GmsPageInjector 插入两卡（tag nuf_gms_cards_v1）
+│   L2：OtaUiController「无更新」族渲染器（gtah.i）+ 共享渲染器（gtak.a）形状探针
+│   L3：通用 Activity.onResume 兜底（仅在 L1 从未解析成功时启用）
+│
 └─ StatusProvider (ContentProvider) — 钩子命中日志回传，供 APP 状态页展示
 ```
 
 配套组件：`ChangelogData`（JSON + 运行时 HTML 拼装）、`ChangelogView` /
-`ChangelogActivity`（渲染）、`scripts/gen_icons.py`（自适应图标）、`build.sh`
-（带硬校验门的可复现构建管线）。
+`ChangelogActivity`（渲染）、`GmsPageInjector`（更新页两卡）、`scripts/gen_icons.py`
+（自适应图标）、`build.sh`（带硬校验门的可复现构建管线）。
+
+### Chimera 委托坑（更新页为何特殊）
+
+`com.google.android.gms.update.phone.SystemUpdateChimeraActivity` **不是**
+`android.app.Activity`——它是 Chimera 的*模块委托*，继承容器提供的
+`com.google.android.chimera.android.Activity`。因此钩 `Activity#onCreate` 后把 `thisObject`
+强转成 `Activity` 会抛 `ClassCastException`（v1.0.1 第一轮失败即此因），而真正的窗口由容器
+Activity `com.google.android.gms.update.SystemUpdateActivity` 持有。模块的解析顺序：先反射
+委托对象上的 `Activity` getter/字段，再退回 `ActivityThread.getActivities()` 全量扫描，选
+`findViewById` 能命中锚点 id 的实例。控件 id 一律按**资源名**运行时 `getIdentifier` 解析
+（数值随 GMS 版本变化）。
 
 ## 8. 已知限制
 
-1. **pending-update 状态门（真机实测）**：无待装 OTA 时，即使 `update_description` 有值，
-   GMS 也会在 UI 层拦住 What's New 块（gservices 直注探针 `docs/ROOT_CAUSE.md` §E5 +
-   真机双重证实：模块 `UpdateDescription` 构造钩命中 5 次，页面依旧裸壳，见
-   `screenshots/device_update_page_state_gate.png`）。链路 B 恢复的是页面读取的数据；
-   「已是最新版本」状态下整块不出现是**原厂行为**，只有真实待装更新时才会渲染。
+1. ~~**pending-update 状态门**~~——**v1.0.1 起由视图注入解决（无 pending update 也渲染）**。
+   GMS 仍会在 UI 层拦住*它自己*的 What's New 块（gservices 直注探针 `docs/ROOT_CAUSE.md` §E5
+   + 真机双重证实：模块 `UpdateDescription` 构造钩命中 5 次，页面依旧裸壳）——这是原厂行为，
+   链路 B 改不了；链路 C（v1.0.1）因此自己画卡、与 OTA 状态解耦，「已是最新版本」状态下两卡
+   照样上屏。历史证据：`screenshots/device_update_page_state_gate.png`。
 2. **GMS checkin 行为**：checkin 会重写/清空 Gservices 的 `update_%` 命名空间——直接改库
    不持久。本模块钩子不受影响（查询时拦截），但手工注入的行会被清掉。
 3. **GMS 升级兼容性**：加分 `UpdateDescription` 钩子依赖 GMS 26.43.30 的字段名
@@ -179,10 +229,17 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 5. **`update_size` 显示 build 号字符串**而非包体大小（离线无法得知真实 OTA 体积）。
    若 GMS 把该字段格式化为文件大小导致显示异常，删掉该键即可（规格允许省略）。
 6. **构建非位级可复现**（zip 时间戳）；构建流程本身可复现。
-7. 真机验证状态：**已在真机 Nothing Phone (3)（Nothing OS 5.0 / build `C5.0-260924-2115`，
-   2026-11-10）验证通过**——链路 A 两个入口、固件信息页、更新日志页全部可用；链路 B 钩子
-   命中，但 What's New 块受限制 1（状态门）约束。见上方截图与
+7. **L2 渲染器探针钩已装但真机未观测到触发**（`gtah.i` 无 `fired` 日志，`gtak` 形状探针
+   miss——该渲染器只在「有更新」状态族可达）。它只影响状态重绘后的复注入；卡片在被移除前不会
+   消失，L1 在 resume 时会重注入，故不影响结果。
+8. **锚点 id 随 GMS 版本变化**：卡片容器插在 `id/description` 之后，按资源名运行时解析。
+   未来 GMS 改布局会导致锚点查找失败——记日志、跳过插卡、不崩溃。
+9. 真机验证状态：**已在真机 Nothing Phone (3)（Nothing OS 5.0 / build `C5.0-260924-2115`，
+   2026-11-10，v1.0.1）验证通过**——更新页 What's New 卡与固件信息卡在无 pending OTA 状态下
+   正常渲染、更新日志链接可跳转、链路 A 回归正常。见上方截图与
    [`screenshots/README.md`](screenshots/README.md)。
+10. v1.0.1 的 APK 即真机验证版（sha256 `c3f49ca4…`）；打 tag 后未重建，故其内部
+    `versionName` 仍是 `1.0`——从本树重新构建可得匹配的版本号（sha256 会变）。
 
 ## 9. 致谢
 

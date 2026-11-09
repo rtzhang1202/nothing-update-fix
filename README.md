@@ -8,15 +8,37 @@
 - Full root-cause analysis with evidence chain: [`docs/ROOT_CAUSE.md`](docs/ROOT_CAUSE.md)
 - Evidence screenshots: [`screenshots/`](screenshots/) (broken state + on-device verification)
 
-## On-device screenshots (Nothing Phone (3), verified build `6611d645…`)
+## What's new in v1.0.1
 
-| Software Info page — injected entries (Link A) | Firmware info via 固件信息 (Link A) | Changelog via 更新日志 (Link A) |
-|---|---|---|
-| ![Software Info page with injected entries](screenshots/device_chain_a_swinfo.png) | ![Firmware info page](screenshots/device_firmware_page.png) | ![Module changelog screen](screenshots/device_changelog.png) |
+- **Update page: two Nothing-styled cards injected directly into the GMS System Update page**
+  (`com.google.android.gms`), so content no longer depends on the OTA state machine:
+  - **What's New** card — the current-version body from the module's bundled `changelog.json`
+    plus a *查看全部更新日志 ›* link into the module's `ChangelogActivity`;
+  - **Firmware info** card — model `A024`, codename `Metroid`, Android 17, system version,
+    build number, baseband, kernel, security patch, serial number (all read live from `Build`
+    properties at runtime);
+  - Both cards render **even with no pending update** — the v1.0.0 *pending-update state gate*
+    limitation is thereby closed. Injection is idempotent (view tag) and anchored on the
+    `SystemUpdateChimeraActivity` lifecycle (see the Chimera note in
+    [§7 Module architecture](#7-module-architecture) — it is a Chimera *module delegate*, not an
+    `Activity`).
+- **About link fixed** to point at the real repository URL.
+- Verified on a real Nothing Phone (3): both cards render, the changelog link jumps, Link A
+  still works. APK sha256 `c3f49ca4…` (see screenshots below).
 
-| Update page — What's New block state-gated (Link B) | Module status / hook hit log |
+## On-device screenshots (Nothing Phone (3), v1.0.1 verified, 2026-11-10)
+
+| Update page — injected **What's New** card (no pending OTA) | Update page — injected **firmware info** card + "查看全部更新日志" link |
 |---|---|
-| ![Update page state gate](screenshots/device_update_page_state_gate.png) | ![Module status screen](screenshots/device_app_status.png) |
+| ![System Update page with injected What's New card](screenshots/device_v101_update_cards.png) | ![Firmware info card on the update page](screenshots/device_v101_firmware_card.png) |
+
+| "查看全部更新日志" → module `ChangelogActivity` | Software Info page — Link A regression (v1.0.1) |
+|---|---|
+| ![Module changelog screen](screenshots/device_v101_changelog.png) | ![Software Info page still has both injected entries](screenshots/device_v101_chainA.png) |
+
+Earlier v1.0.0 captures (Link A entries, module status screen, the pre-fix state-gated
+update page) are kept in [`screenshots/`](screenshots/) and indexed in
+[`screenshots/README.md`](screenshots/README.md).
 
 
 ## 1. Problem
@@ -87,6 +109,22 @@ displayed content is either bundled (changelog JSON) or read live from device pr
   `update_description` HTML is assembled at runtime (changelog sections + firmware info table —
   baseband `gsm.version.baseband`, kernel `ro.kernel.version`/uname, build `ro.build.display.id`
   — all read live with try/catch fallbacks).
+- **Link C — Update page cards, view injection (v1.0.1, scope `com.google.android.gms`)**:
+  instead of relying on GMS rendering the `update_description` payload, the module builds and
+  inserts two cards itself, as siblings after the version-summary `TextView`
+  (`id/description`):
+  - **What's New** card: heading + `Nothing OS 5.0 · C5.0-260924-2115` + the current version's
+    sections from `assets/changelog.json` (first 3 sections × 4 bullets, the rest behind the
+    link) + a *查看全部更新日志 ›* `TextView` that opens the module's `ChangelogActivity`;
+  - **Firmware info** card: 型号 / 设备代号 / Android 版本 / 系统版本 / Build 号 / 基带 / 内核 /
+    安全补丁 / 序列号, each read at render time from `android.os.Build` /
+    `ro.*` properties / `/proc/version` with per-row try/catch fallbacks;
+  - Rendered **regardless of the OTA state** (the page may still say "系统已是最新版本") — the
+    injection is decoupled from `UpdateDescription` / `SystemUpdateStatus`;
+  - Idempotent: the cards container carries a view tag (`nuf_gms_cards_v1`), so repeated
+    `onCreate` / `onResume` passes (check-for-updates, back navigation) add nothing twice;
+  - Anchored on the `SystemUpdateChimeraActivity` lifecycle (L1) with two fallbacks
+    (L2 hijacked-renderer probes, L3 generic `Activity.onResume`), see §7 for the Chimera trap.
 - **Bonus hook**: `com.google.android.gms.update.UpdateDescription(String,String,String,String)`
   constructor — fills **empty** fields only (`setIfEmpty`), so a real OTA description is never
   overwritten.
@@ -167,22 +205,43 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 │       overwrite/append  update_title / update_description / update_size
 │   plus: UpdateDescription(String,String,String,String) ctor → setIfEmpty fill
 │
+├─ Link C — handleLoadPackage("com.google.android.gms")   [v1.0.1 view injection]
+│   L1: hook SystemUpdateChimeraActivity#onCreate/onResume  (primary anchor)
+│       resolveActivity(): delegate→Activity via 0-arg getters / Activity fields,
+│       else ActivityThread.getActivities() → pick the one that findViewById's the anchor
+│       anchor id/description → insert GmsPageInjector cards (tag nuf_gms_cards_v1)
+│   L2: OtaUiController "no-update" renderer (gtah.i) + shared renderer (gtak.a) probes
+│   L3: generic Activity.onResume fallback (only if L1 never resolved)
+│
 └─ StatusProvider (ContentProvider) — hook hit log sink for the in-app status screen
 ```
 
 Supporting pieces: `ChangelogData` (JSON + runtime HTML assembly), `ChangelogView` /
-`ChangelogActivity` (renderers), `scripts/gen_icons.py` (adaptive icon), `build.sh`
-(reproducible pipeline with hard verification gates).
+`ChangelogActivity` (renderers), `GmsPageInjector` (update-page cards), `scripts/gen_icons.py`
+(adaptive icon), `build.sh` (reproducible pipeline with hard verification gates).
+
+### Chimera pitfall (why the update page is a special case)
+
+`com.google.android.gms.update.phone.SystemUpdateChimeraActivity` is **not** an
+`android.app.Activity` — it is a *Chimera module delegate* that extends the container-provided
+`com.google.android.chimera.android.Activity`. Hooking `Activity#onCreate` and casting the
+`thisObject` therefore throws `ClassCastException` (that was the v1.0.1 first-round failure), and
+the real window is owned by the container Activity
+`com.google.android.gms.update.SystemUpdateActivity`. The module resolves the host in this order:
+reflected `Activity` getters/fields on the delegate → `ActivityThread.getActivities()` scan,
+picking the instance whose `findViewById` finds the anchor id. Entity ids are resolved by
+**resource name** at runtime (`getIdentifier`), because their numeric values change with the GMS
+version.
 
 ## 8. Known limitations
 
-1. **Pending-update state gate**: when there is no pending OTA, GMS gates the What's New
-   block at the UI level even if `update_description` is populated (confirmed by a direct
-   gservices injection probe — `docs/ROOT_CAUSE.md` §E5 — **and on device**: the module's
-   `UpdateDescription` constructor hook fired 5×, yet the page stayed bare, see
-   `screenshots/device_update_page_state_gate.png`). Link B restores the data the page reads;
-   a fully hidden block in "already up to date" state is **stock behavior** and will only
-   appear when there is a real pending update.
+1. ~~**Pending-update state gate**~~ — **solved in v1.0.1 by view injection**. GMS still gates
+   *its own* What's New block at the UI level when there is no pending OTA (confirmed by a direct
+   gservices injection probe — `docs/ROOT_CAUSE.md` §E5 — and on device: the `UpdateDescription`
+   constructor hook fired 5× while the page stayed bare). That is stock behavior and Link B
+   cannot change it; Link C (v1.0.1) therefore renders the cards itself, independent of the OTA
+   state, so both cards appear in the "already up to date" state. Historical evidence:
+   `screenshots/device_update_page_state_gate.png`.
 2. **GMS checkin behavior**: GMS rewrites/clears the `update_%` namespace of Gservices on
    checkin — direct DB injection does not persist. This module's hooks are unaffected (they
    intercept at query time), but any manual DB edits will be wiped.
@@ -194,10 +253,20 @@ Supporting pieces: `ChangelogData` (JSON + runtime HTML assembly), `ChangelogVie
 5. **`update_size` shows the build string**, not a package size (real OTA size is unknowable
    offline). Delete the key if GMS formats it as a file size and looks odd.
 6. **Not bit-reproducible builds** (zip timestamps); the pipeline itself is reproducible.
-7. Device verification status: **verified on a real Nothing Phone (3)** (Nothing OS 5.0 /
-   build `C5.0-260924-2115`, 2026-11-10) — Link A entries, firmware page and changelog screen
-   all work; Link B hooks fire but its What's New block is subject to limitation 1 (state
-   gate). See the screenshots above and [`screenshots/README.md`](screenshots/README.md).
+7. **Renderer-probe hook (L2) installed but never observed firing** on device (`gtah.i` never
+   logged `fired`, `gtak` shape probe misses — that renderer is only reachable in the
+   "update available" state family). It only matters for re-injection after a state redraw; the
+   cards persist until removed and L1 re-injects on resume, so this does not affect the result.
+8. **Anchor ids are GMS-version dependent**: the card container is inserted next to
+   `id/description`, resolved by resource *name* at runtime. A future GMS layout change makes the
+   anchor lookup fail — logged, cards skipped, no crash.
+9. Device verification status: **verified on a real Nothing Phone (3)** (Nothing OS 5.0 /
+   build `C5.0-260924-2115`, 2026-11-10, v1.0.1) — update-page What's New + firmware cards
+   render without a pending OTA, the changelog link jumps, Link A still works. See the
+   screenshots above and [`screenshots/README.md`](screenshots/README.md).
+10. The v1.0.1 APK is the exact build verified on device (sha256 `c3f49ca4…`); its internal
+    `versionName` still reads `1.0` because it was not rebuilt after tagging — rebuild from this
+    tree to get a matching label (the sha256 will differ).
 
 ## 9. Acknowledgments
 

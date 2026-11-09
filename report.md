@@ -6,8 +6,8 @@
 
 | 项 | 值 |
 |---|---|
-| APK | `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/release/NothingUpdateFix.apk`（42,071 B，zipalign 4 + v2/v3 签名，apksigner verify 通过，真机安装验证通过） |
-| SHA256 | `6611d64538ad9a8cc6967aae408f9f2c5cc6c4de222c231e69f10d46a926ee93`（轮3运行时签名/行为探针修复重建，真机验证通过版；历史 `eed418063aba93d751d296d23e541763d6b850797f6802d616e9e8660bbc0b59` 反射加固重建、初版 `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928`） |
+| APK | `release/NothingUpdateFix.apk`（50,263 B，zipalign 4 + v2/v3 签名，apksigner verify 通过，真机安装验证通过；v1.0.1 构建） |
+| SHA256 | `c3f49ca469f6ae091a2913bbbe57fce4af22f9b4ad9ccd6f6ab57e199dc17605`（**v1.0.1 = 当前发布版**，GMS 更新页双卡注入 + About 链接修复，真机验证通过；历史：v1.0.0 为 `6611d64538ad9a8cc6967aae408f9f2c5cc6c4de222c231e69f10d46a926ee93`，更早 `eed418063aba93d751d296d23e541763d6b850797f6802d616e9e8660bbc0b59` / `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928`） |
 | 构建命令 | `cd "D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix" && bash build.sh` |
 | 包名 / label | `io.github.rtzhang.nothingupdatefix` / `Nothing update fix`（badging 精确核对） |
 | SDK | minSdk 26 / targetSdk 37（已装 platform android-37.0 = Android 17，compileSdk 37） |
@@ -19,7 +19,7 @@
   `targetSdkVersion:'37'`、图标解析为自适应 `res/mipmap-anydpi-v26/ic_launcher.xml`（另有
   `mipmap-xxhdpi-v4` 传统 PNG 兜底）、launchable-activity = `.MainActivity`。
 - `dexdump`（对最终 APK 内 classes.dex）：`MainHook / ChangelogActivity / MainActivity /
-  StatusProvider / ChangelogData / ChangelogView` 6 类均以 class descriptor 存在；
+  StatusProvider / ChangelogData / ChangelogView / GmsPageInjector` 7 类均以 class descriptor 存在；
   **无任何 `Lde/robv/android/xposed/*` 类定义**（使用真 XposedBridgeApi-82.jar 仅作编译期
   classpath，d8 只收模块自身类；校验按 "Class descriptor" 行比对，排除签名引用误报）。
 - `aapt2 dump xmltree`：`xposedmodule=true`、`xposeddescription`（英文描述）、
@@ -76,7 +76,8 @@
      2026-11-10 抓取自 nothingfirmware.github.io/device/nothing-phone-3.html 与
      nothingarchive.tech/docs/changelogs），ChangelogActivity（Settings 深链目标）同款渲染。
    - 链接区：nothingarchive.tech / nothingfirmware.github.io / nothing.community；
-     About + GitHub 占位链接（github.com/rtzhang/NothingUpdateFix）。
+     About + GitHub 链接（v1.0.1 已修正为真实仓库 github.com/rtzhang1202/nothing-update-fix，
+     v1.0.0 曾指向占位地址 github.com/rtzhang/NothingUpdateFix）。
    - 设置开关：**未实现，钩子常开**（见问题 2）。
 5. **自适应启动器图标**：Python PIL 生成（scripts/gen_icons.py，确定性输出）：黑底 +
    白点阵 N 字形（含齿轮点阵角标），`mipmap-anydpi-v26` 自适应 XML + `mipmap-xxhdpi` 传统
@@ -108,18 +109,64 @@
    等价 APK。JDK 用 Android Studio JBR 25（可用，未下载 Temurin）。
 7. `StatusProvider` exported 无权限保护（其他 app 可写入日志行）——本模块威胁模型下可接受，
    仅影响状态区展示。
-8. **What's New 块状态门（真机实测）**：链路 B 的 Gservices 注入与 `UpdateDescription`
-   构造钩都会命中，但更新页 UI 只在存在 pending OTA 时渲染 What's New 块；无待装更新时
-   整块保持隐藏（原厂行为）。截图：`screenshots/device_update_page_state_gate.png`
-   （与 ROOT_CAUSE §E5 gservices 直注探针结论一致）。
+8. **What's New 块状态门（真机实测）**——**v1.0.1 已由视图注入解决，见 §6**：链路 B 的
+   Gservices 注入与 `UpdateDescription` 构造钩都会命中，但更新页 UI 只在存在 pending OTA 时
+   渲染 What's New 块；无待装更新时整块保持隐藏（原厂行为）。截图：
+   `screenshots/device_update_page_state_gate.png`（与 ROOT_CAUSE §E5 gservices 直注探针结论一致）。
 
 ## 5. 工件清单（项目根 `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/`）
 
 - `build.sh` — 可复现构建脚本（含下载 Xposed API、生成图标、构建、签名、全部校验）
-- `app/src/main/` — AndroidManifest.xml、java/（6 个源文件）、assets/
+- `app/src/main/` — AndroidManifest.xml、java/（7 个源文件，v1.0.1 新增 `GmsPageInjector.java`）、assets/
   （xposed_init、xposed_scope、changelog.json）、res/（图标）
 - `scripts/gen_icons.py` — PIL 图标生成
 - `vendor/XposedBridgeApi-82.jar` — 编译期依赖（api.xposed.info 官方 jar，25,478 B）
 - `keystore/release.jks` — 签名密钥（自动生成并保留）
 - `release/NothingUpdateFix.apk` + `.sha256`（+ `.idsig`）
 - `out/` — 中间产物（badging.txt、dexdump.txt、dex_classes.txt 等校验留痕）
+
+## 6. v1.0.1（2026-11-10）— GMS 更新页视图注入 + About 链接修复
+
+### 6.1 变更
+
+| # | 变更 | 摘要 |
+|---|---|---|
+| 1 | **GMS 系统更新页注入两张 Nothing 深色卡**（`feat(gms)` a83ecfe） | 新增 `GmsPageInjector`：在 `SystemUpdateActivity` 的 GLIF 页上、版本摘要 `id/description` 之后插入 What's New 卡（内置 `changelog.json` 当前版本正文 + 分节要点 + 「查看全部更新日志 ›」→ 模块 `ChangelogActivity`）与固件信息卡（型号 A024 / 设备代号 Metroid / Android 17 / 系统版本 / Build 号 / 基带 / 内核 / 安全补丁 / 序列号，运行时读 `Build`/`ro.*`/`/proc/version`）。**无 pending update 也渲染**（与 OTA 状态机解耦），v1.0.0 的「状态门」限制就此解决 |
+| 2 | **About 链接指向真实仓库**（`fix(app)` fca2622） | 由占位 `github.com/rtzhang/NothingUpdateFix` 改为 `github.com/rtzhang1202/nothing-update-fix` |
+
+注入幂等：卡片容器视图 tag = `nuf_gms_cards_v1`，点「检查更新」、返回重进均不重复插入。
+
+### 6.2 真机验证（Nothing Phone (3) / C5.0-260924-2115 / 2026-11-10，APK sha256 `c3f49ca4…`）
+
+| 判据 | 结果 | 证据（`analysis/phase6/verify/` → `screenshots/device_v101_*.png`） |
+|---|---|---|
+| 两卡渲染（无 pending OTA） | PASS | `r3_page.png`（更新内容卡）/ `r3_bottom.png`（固件信息卡）→ `device_v101_update_cards.png` / `device_v101_firmware_card.png` |
+| What's New 卡正文 | PASS | `r3_ui.xml`：标题 + `Nothing OS 5.0 · C5.0-260924-2115` + 7 个分节（渲染前 3 节 × 前 4 条） |
+| 「查看全部更新日志 ›」跳转 | PASS | `r3_link_bounds.xml`（clickable）→ 点击 → `r3_changelog.png`，`topResumedActivity` = `.ChangelogActivity` → `device_v101_changelog.png` |
+| 固件信息卡 9 行 | PASS | `r3_bottom.xml`：A024 / Metroid / 17 / C5.0-260924-2115 / 2609242115 / MPSS.DE… / 6.6 / 2026-09-01 / 序列号 — |
+| 幂等 | PASS | `r3_after_check.xml`、`r2_after_back.xml`：每个注入标签各 1 处 |
+| 链路 A 回归 | PASS | `r3_chainA.png` / `r3_chainA_ui.xml`：软件信息页两入口仍在 → `device_v101_chainA.png` |
+| 锚点 | L1 命中 | `r3_lsposed_log.txt`：`L1 hooked …#onCreate/#onResume` → `container Activity resolved: com.google.android.gms.update.SystemUpdateActivity` → `added 2 cards (via onCreate, anchor=description, host=LinearLayout)` |
+
+### 6.3 Chimera 委托坑（本轮真根因）
+
+`com.google.android.gms.update.phone.SystemUpdateChimeraActivity` **不是** `android.app.Activity`：
+继承链为 `… < agdp < agdw < agco < agdo < com.google.android.chimera.android.Activity < afxg <
+ContextThemeWrapper`，是 Chimera 的*模块委托*；窗口由容器 Activity
+`com.google.android.gms.update.SystemUpdateActivity` 持有。
+
+- 轮 1 首装完全没注入：钩 `Activity#onCreate` 后强转 `thisObject` 抛
+  `ClassCastException: …SystemUpdateChimeraActivity cannot be cast to android.app.Activity`。
+- 修法 `resolveActivity()`：先反射委托对象上的 `Activity`（0 参 getter / `Activity` 字段），
+  再退 `ActivityThread.getActivities()` 全量扫描，优先选 `findViewById` 能命中锚点 id 的实例；
+  锚点/控件 id 一律按**资源名**运行时 `getIdentifier` 解析（数值随 GMS 版本变化）。
+- 轮 2 重建后仅 `force-stop gms/gms.ui` 热重载即出现 `added 2 cards`，两卡上屏。
+- L2（`gtah.i` / `gtak` 渲染器形状探针）已装但真机未观测到触发——只在「有更新」状态族可达，
+  不影响主链路；L1 每次 resume 会重注入。
+
+### 6.4 发布信息
+
+- 仓库：https://github.com/rtzhang1202/nothing-update-fix
+- Release：`v1.0.1`（tag `v1.0.1`），附件 `NothingUpdateFix.apk`
+- APK sha256：`c3f49ca469f6ae091a2913bbbe57fce4af22f9b4ad9ccd6f6ab57e199dc17605`
+- 注：该 APK 即真机验证版，未在打 tag 后重建，内部 `versionName` 仍为 `1.0`（重建会改变 sha256）。
