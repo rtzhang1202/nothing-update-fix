@@ -1,0 +1,24 @@
+# ---- build intermediates ----
+out/
+__pycache__/
+*.pyc
+*.class
+*.jar.tmp
+
+# ---- signing keystore: never commit ----
+keystore/
+
+# ---- machine-generated build report ----
+report.json
+
+# ---- third-party binaries (download + sha256-verify, see tools/zip_verification.txt) ----
+tools/Vector-*.zip
+
+# ---- release artifacts: keep APK + checksum tracked ----
+release/*.idsig
+
+# ---- editors / OS noise ----
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
