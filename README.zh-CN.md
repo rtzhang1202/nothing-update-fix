@@ -6,7 +6,17 @@
 
 - 包名：`io.github.rtzhang.nothingupdatefix` · 应用名：`Nothing update fix` · minSdk 26 / targetSdk 37
 - 完整根因分析与证据链：[`docs/ROOT_CAUSE.md`](docs/ROOT_CAUSE.md)（英文）
-- 证据截图：[`screenshots/`](screenshots/)
+- 证据截图：[`screenshots/`](screenshots/)（断链状态 + 真机验证）
+
+## 真机截图（Nothing Phone (3)，验证版 `6611d645…`）
+
+| 软件信息页 · 注入入口（链路 A） | 固件信息（链路 A） | 更新日志（链路 A） |
+|---|---|---|
+| ![软件信息页注入入口](screenshots/device_chain_a_swinfo.png) | ![固件信息页](screenshots/device_firmware_page.png) | ![模块更新日志页](screenshots/device_changelog.png) |
+
+| 更新页 · What's New 状态门（链路 B） | 模块状态页 / 钩子命中日志 |
+|---|---|
+| ![更新页状态门](screenshots/device_update_page_state_gate.png) | ![模块状态页](screenshots/device_app_status.png) |
 
 ## 1. 问题
 
@@ -131,6 +141,9 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 │           守卫：thisObject 类名 == com.nothing.settings.deviceinfo.aboutphone
 │                  .DeviceSoftwareInfoFragment
 │   route2: 兜底 — 沿类层级直钩最派生的具体 onCreatePreferences
+│   探针：   NothingSettings 用 R8 混淆了 androidx.preference 成员（title/intent 字段、
+│            addPreference）——运行时按类型签名 + 行为探针解析（探针只在自建一次性
+│            实例上跑，绝不碰宿主对象）
 │   注入：PreferenceScreen.addPreference() ×2（纯反射构造，不依赖宿主 androidx 版本）
 │          nuf_changelog  → ChangelogActivity（模块内，exported）
 │          nuf_fwinfo     → com.nothing.settings.softwareinfo.SoftVersionDisplayActivity
@@ -151,9 +164,11 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 
 ## 8. 已知限制
 
-1. **pending-update 状态门**：无待装 OTA 时，即使 `update_description` 有值，GMS 也可能
-   在 UI 层拦住 What's New 块（gservices 直注探针证实，见 `docs/ROOT_CAUSE.md` §E5）。
-   链路 B 恢复的是页面读取的数据；「已是最新版本」状态下整块仍可能不出现。
+1. **pending-update 状态门（真机实测）**：无待装 OTA 时，即使 `update_description` 有值，
+   GMS 也会在 UI 层拦住 What's New 块（gservices 直注探针 `docs/ROOT_CAUSE.md` §E5 +
+   真机双重证实：模块 `UpdateDescription` 构造钩命中 5 次，页面依旧裸壳，见
+   `screenshots/device_update_page_state_gate.png`）。链路 B 恢复的是页面读取的数据；
+   「已是最新版本」状态下整块不出现是**原厂行为**，只有真实待装更新时才会渲染。
 2. **GMS checkin 行为**：checkin 会重写/清空 Gservices 的 `update_%` 命名空间——直接改库
    不持久。本模块钩子不受影响（查询时拦截），但手工注入的行会被清掉。
 3. **GMS 升级兼容性**：加分 `UpdateDescription` 钩子依赖 GMS 26.43.30 的字段名
@@ -164,8 +179,10 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 5. **`update_size` 显示 build 号字符串**而非包体大小（离线无法得知真实 OTA 体积）。
    若 GMS 把该字段格式化为文件大小导致显示异常，删掉该键即可（规格允许省略）。
 6. **构建非位级可复现**（zip 时间戳）；构建流程本身可复现。
-7. 真机验证状态：PC 侧构建与静态校验已完成；真机验证待最终确认——设备侧行为请按
-   *预期成立、待实测* 对待。
+7. 真机验证状态：**已在真机 Nothing Phone (3)（Nothing OS 5.0 / build `C5.0-260924-2115`，
+   2026-11-10）验证通过**——链路 A 两个入口、固件信息页、更新日志页全部可用；链路 B 钩子
+   命中，但 What's New 块受限制 1（状态门）约束。见上方截图与
+   [`screenshots/README.md`](screenshots/README.md)。
 
 ## 9. 致谢
 

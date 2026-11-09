@@ -6,7 +6,18 @@
 
 - Package: `io.github.rtzhang.nothingupdatefix` · Label: `Nothing update fix` · minSdk 26 / targetSdk 37
 - Full root-cause analysis with evidence chain: [`docs/ROOT_CAUSE.md`](docs/ROOT_CAUSE.md)
-- Evidence screenshots: [`screenshots/`](screenshots/)
+- Evidence screenshots: [`screenshots/`](screenshots/) (broken state + on-device verification)
+
+## On-device screenshots (Nothing Phone (3), verified build `6611d645…`)
+
+| Software Info page — injected entries (Link A) | Firmware info via 固件信息 (Link A) | Changelog via 更新日志 (Link A) |
+|---|---|---|
+| ![Software Info page with injected entries](screenshots/device_chain_a_swinfo.png) | ![Firmware info page](screenshots/device_firmware_page.png) | ![Module changelog screen](screenshots/device_changelog.png) |
+
+| Update page — What's New block state-gated (Link B) | Module status / hook hit log |
+|---|---|
+| ![Update page state gate](screenshots/device_update_page_state_gate.png) | ![Module status screen](screenshots/device_app_status.png) |
+
 
 ## 1. Problem
 
@@ -142,6 +153,9 @@ MainHook (IXposedHookLoadPackage, xposed_init)
 │           guard: thisObject class == com.nothing.settings.deviceinfo.aboutphone
 │                  .DeviceSoftwareInfoFragment
 │   route2: fallback — scan class hierarchy, hook most-derived concrete onCreatePreferences
+│   probe:   NothingSettings R8-renames androidx.preference members (title/intent fields,
+│            addPreference) — resolved at runtime by type signature + behavioural probes on
+│            throw-away instances, never on the host's live objects
 │   inject:  PreferenceScreen.addPreference() ×2 (pure reflection, host-agnostic)
 │           nuf_changelog  → ChangelogActivity (in-module, exported)
 │           nuf_fwinfo     → com.nothing.settings.softwareinfo.SoftVersionDisplayActivity
@@ -162,10 +176,13 @@ Supporting pieces: `ChangelogData` (JSON + runtime HTML assembly), `ChangelogVie
 
 ## 8. Known limitations
 
-1. **Pending-update state gate**: when there is no pending OTA, GMS may gate the What's New
+1. **Pending-update state gate**: when there is no pending OTA, GMS gates the What's New
    block at the UI level even if `update_description` is populated (confirmed by a direct
-   gservices injection probe — see `docs/ROOT_CAUSE.md` §E5). Link B restores the data the
-   page reads; a fully hidden block in "already up to date" state can still occur.
+   gservices injection probe — `docs/ROOT_CAUSE.md` §E5 — **and on device**: the module's
+   `UpdateDescription` constructor hook fired 5×, yet the page stayed bare, see
+   `screenshots/device_update_page_state_gate.png`). Link B restores the data the page reads;
+   a fully hidden block in "already up to date" state is **stock behavior** and will only
+   appear when there is a real pending update.
 2. **GMS checkin behavior**: GMS rewrites/clears the `update_%` namespace of Gservices on
    checkin — direct DB injection does not persist. This module's hooks are unaffected (they
    intercept at query time), but any manual DB edits will be wiped.
@@ -177,8 +194,10 @@ Supporting pieces: `ChangelogData` (JSON + runtime HTML assembly), `ChangelogVie
 5. **`update_size` shows the build string**, not a package size (real OTA size is unknowable
    offline). Delete the key if GMS formats it as a file size and looks odd.
 6. **Not bit-reproducible builds** (zip timestamps); the pipeline itself is reproducible.
-7. Device verification status: PC-side build and static checks are done; on-device validation
-   is pending final confirmation — treat on-device behavior as *expected, pending verification*.
+7. Device verification status: **verified on a real Nothing Phone (3)** (Nothing OS 5.0 /
+   build `C5.0-260924-2115`, 2026-11-10) — Link A entries, firmware page and changelog screen
+   all work; Link B hooks fire but its What's New block is subject to limitation 1 (state
+   gate). See the screenshots above and [`screenshots/README.md`](screenshots/README.md).
 
 ## 9. Acknowledgments
 
