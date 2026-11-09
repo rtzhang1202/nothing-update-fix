@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.rtzhang.nothingupdatefix"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk
+        android:minSdkVersion="26"
+        android:targetSdkVersion="37" />
+
+    <application
+        android:label="Nothing update fix"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Deep-link target for the '更新日志' preference injected into Settings. -->
+        <activity
+            android:name=".ChangelogActivity"
+            android:exported="true"
+            android:label="更新日志" />
+
+        <!-- Status channel for hook-hit logs (hooks in other processes call in). -->
+        <provider
+            android:name=".StatusProvider"
+            android:exported="true"
+            android:authorities="io.github.rtzhang.nothingupdatefix.status" />
+
+        <!-- LSPosed / Xposed classic module metadata -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Fix Nothing Phone (3) system update page: restore changelog/firmware info entries (Settings) and GMS update_* Gservices values" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+    </application>
+</manifest>

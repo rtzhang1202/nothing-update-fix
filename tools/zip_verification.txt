@@ -1,0 +1,28 @@
+# LSPosed/Vector zip structure verification
+File: Vector-v2.2-3080-Release.zip
+Downloaded: 2026-11-10 from https://github.com/JingMatrix/Vector/releases/download/v2.2/Vector-v2.2-3080-Release.zip
+Size: 9316843 bytes
+SHA256: 9ee8323575d615f7b3f1076ff60b2a63a49390ef11881b52632311a37f6f79cc
+
+## Why this zip (fork selection rationale)
+- Official repo github.com/LSPosed/LSPosed: unmaintained since 2023-10-11 (last release v1.9.2),
+  README lists Android 8.1-14 only -> NOT suitable for this device (Android 17 / NOS 5.0).
+- mywalkb/LSPosed_mod: last release 1.9.3 (2024-03-08), inactive, Android 8.1-15 beta -> not suitable.
+- Chosen: JingMatrix's maintained continuation (formerly JingMatrix/LSPosed, renamed
+  "Vector" at v2.0 on 2026-03-22). Highest-reputation maintained fork:
+  actively developed (weekly canary builds, latest canary 3118 on 2026-11-06),
+  v2.1+ officially supports Android 8.1-17, same author lineage as original LSPosed
+  port, GPL-3.0. Stable channel: v2.2 (2026-08-04). Installed device module
+  zygisk_vector is exactly versionCode 3080 = this release.
+
+## Structure check (verified with python zipfile)
+- module.prop at zip root: PRESENT (id=zygisk_vector, version=v2.2 (3080-88f8e1fa-JingMatrix-Vector))
+- Zygisk libs: lib/arm64-v8a/libzygisk.so, lib/armeabi-v7a/libzygisk.so,
+  lib/x86/libzygisk.so, lib/x86_64/libzygisk.so (each with .sha256 sidecar)
+- NOTE: libs are packaged under lib/<abi>/, NOT classic zygisk/*.so. customize.sh
+  (SKIPUNZIP=1) extracts them into $MODPATH/zygisk/<abi>.so at install time and
+  verifies each file's sha256 during install. Magisk module structure is valid.
+- Also contains: customize.sh, action.sh, service.sh, uninstall.sh, sepolicy.rule,
+  framework/vector.dex, cli, daemon.apk, manager.apk (manager APK bundled).
+
+VERDICT: valid Magisk/Zygisk module zip.
