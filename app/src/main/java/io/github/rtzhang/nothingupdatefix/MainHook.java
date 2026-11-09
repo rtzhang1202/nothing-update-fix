@@ -454,6 +454,14 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             log("chainB bonus unavailable (" + t + ")");
         }
+
+        // Chain B main path (phase6): view injection on the gOTA update page.
+        try {
+            GmsPageInjector.install(lpparam.classLoader);
+            log("chainB: GmsPageInjector installed");
+        } catch (Throwable t) {
+            log("chainB: GmsPageInjector install failed: " + t);
+        }
     }
 
     private static void hookQueryOverloads(String className, ClassLoader cl, XC_MethodHook hook) {
