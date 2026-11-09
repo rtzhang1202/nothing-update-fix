@@ -7,7 +7,7 @@
 | 项 | 值 |
 |---|---|
 | APK | `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/release/NothingUpdateFix.apk`（37,975 B，zipalign 4 + v2/v3 签名，apksigner verify 通过） |
-| SHA256 | `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928` |
+| SHA256 | `eed418063aba93d751d296d23e541763d6b850797f6802d616e9e8660bbc0b59`（01:45 反射加固重建后；初版 `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928`） |
 | 构建命令 | `cd "D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix" && bash build.sh` |
 | 包名 / label | `io.github.rtzhang.nothingupdatefix` / `Nothing update fix`（badging 精确核对） |
 | SDK | minSdk 26 / targetSdk 37（已装 platform android-37.0 = Android 17，compileSdk 37） |
