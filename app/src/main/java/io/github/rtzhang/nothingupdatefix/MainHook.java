@@ -194,14 +194,14 @@ public class MainHook implements IXposedHookLoadPackage {
 
         Class<?> prefCls = XposedHelpers.findClass("androidx.preference.Preference", classLoader);
 
-        if (XposedHelpers.callMethod(screen, "findPreference", KEY_CHANGELOG) == null) {
+        if (findPreferenceCompat(screen, prefCls, KEY_CHANGELOG) == null) {
             Intent i = new Intent();
             i.setComponent(new ComponentName(MODULE_PKG, MODULE_PKG + ".ChangelogActivity"));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             addPreference(prefCls, screen, ctx, KEY_CHANGELOG, "更新日志", i, 100);
             log(ctx, "chainA " + route + ": added '更新日志' preference");
         }
-        if (XposedHelpers.callMethod(screen, "findPreference", KEY_FWINFO) == null) {
+        if (findPreferenceCompat(screen, prefCls, KEY_FWINFO) == null) {
             Intent i = new Intent();
             i.setComponent(new ComponentName(PKG_SETTINGS, FWINFO_ACTIVITY));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -210,17 +210,51 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void addPreference(Class<?> prefCls, Object screen, Context ctx,
-                                      String key, CharSequence title, Intent intent, int order) {
-        Object p = XposedHelpers.newInstance(prefCls, ctx);
-        XposedHelpers.callMethod(p, "setKey", key);
-        XposedHelpers.callMethod(p, "setTitle", title);
-        XposedHelpers.callMethod(p, "setIntent", intent);
+    /**
+     * Dedupe probe: PreferenceScreen#findPreference(CharSequence) via exact-signature
+     * reflection (the Vector legacy bridge's callMethod matching rejects String→
+     * CharSequence), with a manual getPreferenceCount()/getPreference(i) scan fallback.
+     */
+    private static Object findPreferenceCompat(Object screen, Class<?> prefCls, String key) {
         try {
-            XposedHelpers.callMethod(p, "setOrder", order);
+            Method m = screen.getClass().getMethod("findPreference", CharSequence.class);
+            return m.invoke(screen, key);
         } catch (Throwable ignored) {
         }
-        XposedHelpers.callMethod(screen, "addPreference", p);
+        try {
+            Method cnt = screen.getClass().getMethod("getPreferenceCount");
+            Method get = screen.getClass().getMethod("getPreference", int.class);
+            Method getKey = prefCls.getMethod("getKey");
+            int n = (Integer) cnt.invoke(screen);
+            for (int i = 0; i < n; i++) {
+                Object p = get.invoke(screen, i);
+                if (p != null && key.equals(getKey.invoke(p))) {
+                    return p;
+                }
+            }
+        } catch (Throwable t) {
+            log("findPreferenceCompat fallback error: " + t);
+        }
+        return null;
+    }
+
+    /** Build + attach a Preference using exact-signature reflection only. */
+    private static void addPreference(Class<?> prefCls, Object screen, Context ctx,
+                                      String key, CharSequence title, Intent intent, int order) {
+        try {
+            Object p = prefCls.getConstructor(Context.class).newInstance(ctx);
+            prefCls.getMethod("setKey", String.class).invoke(p, key);
+            prefCls.getMethod("setTitle", CharSequence.class).invoke(p, title);
+            prefCls.getMethod("setIntent", Intent.class).invoke(p, intent);
+            try {
+                prefCls.getMethod("setOrder", int.class).invoke(p, order);
+            } catch (Throwable ignored) {
+            }
+            screen.getClass().getMethod("addPreference", prefCls).invoke(screen, p);
+            log("addPreference ok: " + key);
+        } catch (Throwable t) {
+            log("addPreference error (" + key + "): " + t);
+        }
     }
 
     // ================================================================ chain B
