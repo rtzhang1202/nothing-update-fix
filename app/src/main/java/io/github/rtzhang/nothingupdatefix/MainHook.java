@@ -57,6 +57,19 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private static volatile Map<String, String> sOverrides;
 
+    // ---- chain A: runtime-resolved obfuscated androidx.preference API ----
+    // NothingSettings R8-obfuscates androidx.preference members (setKey/addPreference/
+    // findPreference/... renamed); only getKey()/setVisible()/compareTo()/toString()
+    // survive. We resolve the needed members by TYPE SIGNATURE + behavioural probes
+    // on our own throw-away instances, never on the host's live objects.
+    private static final Set<Object> sInjectedScreens =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<Object, Boolean>());
+    private static volatile Class<?> sPrefCls;
+    private static volatile java.lang.reflect.Field sTitleField;
+    private static volatile java.lang.reflect.Field sIntentField;
+    private static volatile java.util.List<java.lang.reflect.Field> sCharFields;
+    private static volatile java.lang.reflect.Method sAddPrefMethod;
+
     // ------------------------------------------------------------------ entry
 
     @Override
@@ -192,68 +205,195 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
 
-        Class<?> prefCls = XposedHelpers.findClass("androidx.preference.Preference", classLoader);
-
-        if (findPreferenceCompat(screen, prefCls, KEY_CHANGELOG) == null) {
-            Intent i = new Intent();
-            i.setComponent(new ComponentName(MODULE_PKG, MODULE_PKG + ".ChangelogActivity"));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            addPreference(prefCls, screen, ctx, KEY_CHANGELOG, "更新日志", i, 100);
+        if (!resolveChainA(ctx, classLoader)) {
+            log("chainA " + route + ": obfuscated androidx API resolve failed, skip");
+            return;
+        }
+        synchronized (sInjectedScreens) {
+            if (sInjectedScreens.contains(screen)) {
+                log("chainA " + route + ": already injected, skip");
+                return;
+            }
+        }
+        Intent i = new Intent();
+        i.setComponent(new ComponentName(MODULE_PKG, MODULE_PKG + ".ChangelogActivity"));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        boolean ok1 = addInjectedPreference(screen, ctx, "更新日志", i);
+        if (ok1) {
             log(ctx, "chainA " + route + ": added '更新日志' preference");
         }
-        if (findPreferenceCompat(screen, prefCls, KEY_FWINFO) == null) {
-            Intent i = new Intent();
-            i.setComponent(new ComponentName(PKG_SETTINGS, FWINFO_ACTIVITY));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            addPreference(prefCls, screen, ctx, KEY_FWINFO, "固件信息", i, 101);
+        i = new Intent();
+        i.setComponent(new ComponentName(PKG_SETTINGS, FWINFO_ACTIVITY));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        boolean ok2 = addInjectedPreference(screen, ctx, "固件信息", i);
+        if (ok2) {
             log(ctx, "chainA " + route + ": added '固件信息' preference");
+        }
+        if (ok1 || ok2) {
+            synchronized (sInjectedScreens) {
+                sInjectedScreens.add(screen);
+            }
         }
     }
 
     /**
-     * Dedupe probe: PreferenceScreen#findPreference(CharSequence) via exact-signature
-     * reflection (the Vector legacy bridge's callMethod matching rejects String→
-     * CharSequence), with a manual getPreferenceCount()/getPreference(i) scan fallback.
+     * Resolve the R8-renamed androidx.preference members we need, by type signature
+     * and behavioural probes on throw-away instances (never on host objects):
+     * - title field: the CharSequence field whose marker appears FIRST in the output
+     *   of the class's only no-arg StringBuilder method (getFilterableStringBuilder
+     *   appends title, then summary);
+     * - intent field: the only Intent-typed field;
+     * - addPreference: the single (Preference)boolean method that grows a probe
+     *   PreferenceScreen's internal List when invoked.
      */
-    private static Object findPreferenceCompat(Object screen, Class<?> prefCls, String key) {
-        try {
-            Method m = screen.getClass().getMethod("findPreference", CharSequence.class);
-            return m.invoke(screen, key);
-        } catch (Throwable ignored) {
+    private static boolean resolveChainA(Context ctx, ClassLoader cl) {
+        if (sAddPrefMethod != null) {
+            return true;
         }
-        try {
-            Method cnt = screen.getClass().getMethod("getPreferenceCount");
-            Method get = screen.getClass().getMethod("getPreference", int.class);
-            Method getKey = prefCls.getMethod("getKey");
-            int n = (Integer) cnt.invoke(screen);
-            for (int i = 0; i < n; i++) {
-                Object p = get.invoke(screen, i);
-                if (p != null && key.equals(getKey.invoke(p))) {
-                    return p;
-                }
+        synchronized (MainHook.class) {
+            if (sAddPrefMethod != null) {
+                return true;
             }
-        } catch (Throwable t) {
-            log("findPreferenceCompat fallback error: " + t);
+            try {
+                Class<?> prefCls = XposedHelpers.findClass("androidx.preference.Preference", cl);
+                Class<?> screenCls = XposedHelpers.findClass("androidx.preference.PreferenceScreen", cl);
+                Class<?> groupCls = XposedHelpers.findClass("androidx.preference.PreferenceGroup", cl);
+
+                // CharSequence fields (title/summary)
+                java.util.List<java.lang.reflect.Field> charFields = new ArrayList<>();
+                java.util.List<java.lang.reflect.Field> strFields = new ArrayList<>();
+                java.lang.reflect.Field intentField = null;
+                for (java.lang.reflect.Field f : prefCls.getDeclaredFields()) {
+                    f.setAccessible(true);
+                    if (f.getType() == CharSequence.class) {
+                        charFields.add(f);
+                    } else if (f.getType() == String.class) {
+                        strFields.add(f);
+                    } else if (f.getType() == Intent.class && intentField == null) {
+                        intentField = f;
+                    }
+                }
+                sCharFields = charFields;
+                sIntentField = intentField;
+
+                // title: first marker appended by the no-arg StringBuilder method
+                Method sbMethod = null;
+                for (Method m : prefCls.getDeclaredMethods()) {
+                    if (m.getParameterTypes().length == 0 && m.getReturnType() == StringBuilder.class) {
+                        sbMethod = m;
+                        break;
+                    }
+                }
+                if (sbMethod != null && !charFields.isEmpty()) {
+                    sbMethod.setAccessible(true);
+                    Object probe = prefCls.getConstructor(Context.class).newInstance(ctx);
+                    for (int i = 0; i < charFields.size(); i++) {
+                        charFields.get(i).set(probe, "NUFMARK" + i + ";");
+                    }
+                    String out = String.valueOf(sbMethod.invoke(probe));
+                    int best = -1;
+                    int bestPos = Integer.MAX_VALUE;
+                    for (int i = 0; i < charFields.size(); i++) {
+                        int p = out.indexOf("NUFMARK" + i + ";");
+                        if (p >= 0 && p < bestPos) {
+                            bestPos = p;
+                            best = i;
+                        }
+                    }
+                    if (best >= 0) {
+                        sTitleField = charFields.get(best);
+                    }
+                    for (java.lang.reflect.Field f : charFields) {
+                        f.set(probe, null);
+                    }
+                }
+                log("chainA resolve: titleField=" + (sTitleField != null ? sTitleField.getName() : "null")
+                        + " intentField=" + (intentField != null ? intentField.getName() : "null")
+                        + " charFields=" + charFields.size());
+
+                // addPreference(Preference)Z — probe each candidate on our own screen
+                java.util.List<Method> cands = new ArrayList<>();
+                for (Class<?> c = screenCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (Method m : c.getDeclaredMethods()) {
+                        Class<?>[] pt = m.getParameterTypes();
+                        if (pt.length == 1 && pt[0] == prefCls && m.getReturnType() == boolean.class) {
+                            m.setAccessible(true);
+                            cands.add(m);
+                        }
+                    }
+                }
+                java.lang.reflect.Field listField = null;
+                for (Class<?> c = groupCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                        if (f.getType() == java.util.List.class) {
+                            f.setAccessible(true);
+                            listField = f;
+                            break;
+                        }
+                    }
+                    if (listField != null) {
+                        break;
+                    }
+                }
+                for (Method cand : cands) {
+                    Object probeScreen = screenCls
+                            .getConstructor(Context.class, android.util.AttributeSet.class)
+                            .newInstance(ctx, null);
+                    Object probePref = prefCls.getConstructor(Context.class).newInstance(ctx);
+                    int before = listSize(listField, probeScreen);
+                    try {
+                        cand.invoke(probeScreen, probePref);
+                    } catch (Throwable ignored) {
+                    }
+                    int after = listSize(listField, probeScreen);
+                    log("chainA resolve: cand " + cand.getName() + "(Preference)Z -> list "
+                            + before + "->" + after);
+                    if (after > before) {
+                        sAddPrefMethod = cand;
+                        break;
+                    }
+                }
+                sPrefCls = prefCls;
+                log("chainA resolve: addPreference=" + (sAddPrefMethod != null ? sAddPrefMethod.getName() : "null")
+                        + " (candidates: " + cands.size() + ")");
+                return sAddPrefMethod != null;
+            } catch (Throwable t) {
+                log("chainA resolve error: " + t);
+                return false;
+            }
         }
-        return null;
     }
 
-    /** Build + attach a Preference using exact-signature reflection only. */
-    private static void addPreference(Class<?> prefCls, Object screen, Context ctx,
-                                      String key, CharSequence title, Intent intent, int order) {
+    private static int listSize(java.lang.reflect.Field listField, Object group) {
         try {
-            Object p = prefCls.getConstructor(Context.class).newInstance(ctx);
-            prefCls.getMethod("setKey", String.class).invoke(p, key);
-            prefCls.getMethod("setTitle", CharSequence.class).invoke(p, title);
-            prefCls.getMethod("setIntent", Intent.class).invoke(p, intent);
-            try {
-                prefCls.getMethod("setOrder", int.class).invoke(p, order);
-            } catch (Throwable ignored) {
+            Object l = listField.get(group);
+            return (l != null) ? ((java.util.List<?>) l).size() : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** Create a Preference via ctor + field writes and hand it to addPreference. */
+    private static boolean addInjectedPreference(Object screen, Context ctx,
+                                                 CharSequence title, Intent intent) {
+        try {
+            Object p = sPrefCls.getConstructor(Context.class).newInstance(ctx);
+            if (sTitleField != null) {
+                sTitleField.set(p, title);
+            } else if (sCharFields != null) {
+                for (java.lang.reflect.Field f : sCharFields) {
+                    f.set(p, title); // fallback: title+summary both show the text
+                }
             }
-            screen.getClass().getMethod("addPreference", prefCls).invoke(screen, p);
-            log("addPreference ok: " + key);
+            if (sIntentField != null) {
+                sIntentField.set(p, intent);
+            }
+            sAddPrefMethod.invoke(screen, p);
+            log("addInjectedPreference ok: " + title);
+            return true;
         } catch (Throwable t) {
-            log("addPreference error (" + key + "): " + t);
+            log("addInjectedPreference error: " + t);
+            return false;
         }
     }
 
