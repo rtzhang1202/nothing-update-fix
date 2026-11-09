@@ -1,13 +1,13 @@
 # Nothing update fix — 构建与交付报告
 
-日期：2026-11-10 · 仅 PC 侧开发构建（未触碰设备；验证由调度方执行）· 未推送 GitHub
+日期：2026-11-10 · PC 侧构建 + 真机验证（Nothing Phone (3) 实测通过）· 已开源：https://github.com/rtzhang1202/nothing-update-fix
 
 ## 1. 交付物
 
 | 项 | 值 |
 |---|---|
-| APK | `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/release/NothingUpdateFix.apk`（37,975 B，zipalign 4 + v2/v3 签名，apksigner verify 通过） |
-| SHA256 | `eed418063aba93d751d296d23e541763d6b850797f6802d616e9e8660bbc0b59`（01:45 反射加固重建后；初版 `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928`） |
+| APK | `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/release/NothingUpdateFix.apk`（42,071 B，zipalign 4 + v2/v3 签名，apksigner verify 通过，真机安装验证通过） |
+| SHA256 | `6611d64538ad9a8cc6967aae408f9f2c5cc6c4de222c231e69f10d46a926ee93`（轮3运行时签名/行为探针修复重建，真机验证通过版；历史 `eed418063aba93d751d296d23e541763d6b850797f6802d616e9e8660bbc0b59` 反射加固重建、初版 `71e5c116f889522f7d6cd44bf9fe4a3e528abeb0bb98156cbc7294fd4de33928`） |
 | 构建命令 | `cd "D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix" && bash build.sh` |
 | 包名 / label | `io.github.rtzhang.nothingupdatefix` / `Nothing update fix`（badging 精确核对） |
 | SDK | minSdk 26 / targetSdk 37（已装 platform android-37.0 = Android 17，compileSdk 37） |
@@ -84,11 +84,18 @@
 
 ## 4. 问题与已知限制
 
-1. **未做真机验证**（按约束只做 PC 侧）：链路 A 的 androidx `Preference(Context)` 构造、
-   `addPreference` 时序（若宿主在 onCreatePreferences 后重建 screen 会再注入一次——有
-   findPreference 去重覆盖）、链路 B 的 GSF Cursor 列序假设（已按列名定位，弱假设）。
-   另外链路 A 注入发生在 `DeviceSoftwareInfoFragment.onCreatePreferences` 之后，若该页
-   实际由多个 fragment 叠加，需按实测微调时机（可加 onCreatePreferences 之后 post 一次）。
+1. **真机验证已完成（2026-11-10，Nothing Phone (3) / C5.0-260924-2115）**：
+   - 链路 A 通过——软件信息页成功注入「更新日志」（→ 模块 ChangelogActivity 正常渲染）
+     与「固件信息」（→ Nothing 自带 SoftVersionDisplayActivity/软件版本页正常打开）。
+     期间经历 3 轮修复：①Vector legacy bridge `callMethod` 拒绝 String→CharSequence 参数
+     ②NothingSettings 对 `androidx.preference` 做了 R8 混淆 ③改为运行时签名 + 行为探针
+     （`titleField=F`、`intentField=K`、`addPreference=J1` 探针）解析宿主字段/方法——
+     这是链路 A 真机跑通的关键。截图见 `screenshots/device_chain_a_swinfo.png`、
+     `device_firmware_page.png`、`device_changelog.png`、`device_app_status.png`。
+   - 链路 B 钩子命中（`UpdateDescription` 构造钩命中 5 次），但 What's New 块存在
+     **状态门**：仅在有 pending update 时渲染（原厂行为，见限制 8），「已是最新版本」
+     状态下整块仍被隐藏。截图见 `screenshots/device_update_page_state_gate.png`。
+   - 其余 PC 侧约束项（链路 A 注入时序、链路 B GSF Cursor 列名假设）经真机实测均成立。
 2. **设置开关未做**：XSharedPreferences 需要 world-readable prefs，现代 Android 上不可靠，
    风险大于收益 → 钩子永远开启（模块无副作用数据面，仅补 UI 入口/补展示文案）。
 3. **链路 A route1 依赖 androidx 实现形态**：`PreferenceFragmentCompat.onCreatePreferences`
@@ -101,6 +108,10 @@
    等价 APK。JDK 用 Android Studio JBR 25（可用，未下载 Temurin）。
 7. `StatusProvider` exported 无权限保护（其他 app 可写入日志行）——本模块威胁模型下可接受，
    仅影响状态区展示。
+8. **What's New 块状态门（真机实测）**：链路 B 的 Gservices 注入与 `UpdateDescription`
+   构造钩都会命中，但更新页 UI 只在存在 pending OTA 时渲染 What's New 块；无待装更新时
+   整块保持隐藏（原厂行为）。截图：`screenshots/device_update_page_state_gate.png`
+   （与 ROOT_CAUSE §E5 gservices 直注探针结论一致）。
 
 ## 5. 工件清单（项目根 `D:/Hermes Desktop/NothingPhone3-Root/NothingUpdateFix/`）
 
