@@ -109,8 +109,8 @@ public class MainActivity extends Activity {
                         + "链路A：软件信息页补回「更新日志 / 固件信息」入口\n"
                         + "链路B：GMS Gservices 注入 update_title / update_description / update_size",
                 12, false, 0xFF8A8A8A);
-        link(root, "GitHub（占位）：github.com/rtzhang/NothingUpdateFix",
-                "https://github.com/rtzhang/NothingUpdateFix");
+        link(root, "GitHub：github.com/rtzhang1202/nothing-update-fix",
+                "https://github.com/rtzhang1202/nothing-update-fix");
 
         setContentView(scroll);
         refreshStatus();
